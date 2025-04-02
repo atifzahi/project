@@ -7,120 +7,135 @@
 # Import necessary libraries
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.ensemble import RandomForestRegressor
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.linear_model import LinearRegression
-from xgboost import XGBRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-import warnings
-warnings.filterwarnings('ignore')
+from sklearn.preprocessing import StandardScaler
 from google.colab import files
-# -----------------------------
-# Step 1: Load and Inspect Dataset
-# -----------------------------
+import io
 
-print("Please upload your CSV file")
+# Upload the dataset
 uploaded = files.upload()
-pesticides = pd.read_csv(uploaded)
+filename = list(uploaded.keys())[0]
+content = uploaded[filename]
 
-print("\nInitial Dataset Info:")
-print(pesticides.info())
-print("\nFirst 5 rows:")
-print(pesticides.head())
+# Read the CSV into a pandas DataFrame
+df = pd.read_csv(io.BytesIO(content))
 
-# -----------------------------
-# Step 2: Clean and Preprocess Data
-# -----------------------------
-print("\nCleaning and preprocessing data...")
-pesticides.columns = pesticides.columns.str.strip().str.lower()
-label_encoders = {}
-for col in ['area', 'item', 'unit']:
-    le = LabelEncoder()
-    pesticides[col] = le.fit_transform(pesticides[col])
-    label_encoders[col] = le
+# Data Exploration
+print("Data Overview:")
+print(df.info())
+print("\nDescriptive Statistics:")
+print(df.describe())
 
-# -----------------------------
-# Step 3: Feature and Target Selection
-# -----------------------------
-X = pesticides[['area', 'item', 'year']]
-y = pesticides['value']
-
-# -----------------------------
-# Step 4: Train-Test Split
-# -----------------------------
-print("\nSplitting dataset...")
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# -----------------------------
-# Step 5: Feature Scaling
-# -----------------------------
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-
-# -----------------------------
-# Step 6: Model 1 - Linear Regression
-# -----------------------------
-print("\nTraining Linear Regression Model...")
-lr_model = LinearRegression()
-lr_model.fit(X_train_scaled, y_train)
-y_pred_lr = lr_model.predict(X_test_scaled)
-print("\nLinear Regression Results:")
-print(f"MAE: {mean_absolute_error(y_test, y_pred_lr):.2f}")
-print(f"MSE: {mean_squared_error(y_test, y_pred_lr):.2f}")
-print(f"R2 Score: {r2_score(y_test, y_pred_lr):.2f}")
-
-# -----------------------------
-# Step 7: Model 2 - Random Forest
-# -----------------------------
-print("\nTraining Random Forest Model...")
-rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
-rf_model.fit(X_train_scaled, y_train)
-y_pred_rf = rf_model.predict(X_test_scaled)
-print("\nRandom Forest Results:")
-print(f"MAE: {mean_absolute_error(y_test, y_pred_rf):.2f}")
-print(f"MSE: {mean_squared_error(y_test, y_pred_rf):.2f}")
-print(f"R2 Score: {r2_score(y_test, y_pred_rf):.2f}")
-
-# Feature importance
-feature_importances = pd.Series(rf_model.feature_importances_, index=X.columns)
-plt.figure(figsize=(8, 6))
-feature_importances.sort_values().plot(kind='barh')
-plt.xlabel('Feature Importance')
-plt.ylabel('Features')
-plt.title('Feature Importance - Random Forest')
-plt.tight_layout()
+# Visualizing Missing Values
+plt.figure(figsize=(10,6))
+sns.heatmap(df.isnull(), cbar=False, cmap='viridis')
+plt.title('Missing Values Heatmap')
 plt.show()
 
-# -----------------------------
-# Step 8: Model 3 - XGBoost
-# -----------------------------
-print("\nTraining XGBoost Model...")
-xgb_model = XGBRegressor(n_estimators=100, random_state=42, verbosity=0)
-xgb_model.fit(X_train_scaled, y_train)
-y_pred_xgb = xgb_model.predict(X_test_scaled)
-print("\nXGBoost Results:")
-print(f"MAE: {mean_absolute_error(y_test, y_pred_xgb):.2f}")
-print(f"MSE: {mean_squared_error(y_test, y_pred_xgb):.2f}")
-print(f"R2 Score: {r2_score(y_test, y_pred_xgb):.2f}")
+# Dropping unnecessary columns (if any, like 'Unnamed: 0')
+df = df.drop(columns=['Unnamed: 0'], errors='ignore')
 
-# -----------------------------
-# Step 9: Model Comparison Summary
-# -----------------------------
-print("\nModel Comparison Summary:")
-results = {
-    "Linear Regression": [mean_absolute_error(y_test, y_pred_lr), mean_squared_error(y_test, y_pred_lr), r2_score(y_test, y_pred_lr)],
-    "Random Forest": [mean_absolute_error(y_test, y_pred_rf), mean_squared_error(y_test, y_pred_rf), r2_score(y_test, y_pred_rf)],
-    "XGBoost": [mean_absolute_error(y_test, y_pred_xgb), mean_squared_error(y_test, y_pred_xgb), r2_score(y_test, y_pred_xgb)]
+# Handle missing values by filling with mean for numerical columns
+numeric_columns = df.select_dtypes(include=['number']).columns
+df[numeric_columns] = df[numeric_columns].fillna(df[numeric_columns].mean())
+
+# Feature Engineering
+# Interaction term between 'pesticides_tonnes' and 'avg_temp' for example
+df['pesticide_temp_interaction'] = df['pesticides_tonnes'] * df['avg_temp']
+
+# Temporal trend: Adding difference from the median year for time-based trend extraction
+df['year_diff'] = df['Year'] - df['Year'].median()
+
+# Split data into features and target
+X = df[['Year', 'average_rain_fall_mm_per_year', 'pesticides_tonnes', 'avg_temp', 'pesticide_temp_interaction', 'year_diff']]
+y = df['hg/ha_yield']
+
+# Scaling features (important for some models)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# Define models
+models = {
+    'Linear Regression': LinearRegression(),
+    'Random Forest Regressor': RandomForestRegressor(random_state=42),
+    'Gradient Boosting Regressor': GradientBoostingRegressor(random_state=42)
 }
 
-comparison_df = pd.DataFrame(results, index=['MAE', 'MSE', 'R2']).T
-print(comparison_df)
+# Hyperparameter Tuning with GridSearchCV for Random Forest
+param_grid_rf = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [10, 20, None],
+    'min_samples_split': [2, 5, 10]
+}
 
-# Optional: Save results
-comparison_df.to_csv("model_comparison_results.csv")
-print("\nModel comparison saved as 'model_comparison_results.csv'")
+param_grid_gb = {
+    'n_estimators': [50, 100, 200],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'max_depth': [3, 5, 7]
+}
+
+# GridSearchCV for Random Forest and Gradient Boosting
+grid_search_rf = GridSearchCV(RandomForestRegressor(random_state=42), param_grid_rf, cv=5)
+grid_search_gb = GridSearchCV(GradientBoostingRegressor(random_state=42), param_grid_gb, cv=5)
+
+# Fit the grid searches
+grid_search_rf.fit(X_train, y_train)
+grid_search_gb.fit(X_train, y_train)
+
+best_rf = grid_search_rf.best_estimator_
+best_gb = grid_search_gb.best_estimator_
+
+# Model Stacking: Combine predictions from multiple models for improved performance
+estimators = [
+    ('lr', LinearRegression()),
+    ('rf', best_rf),
+    ('gb', best_gb)
+]
+
+stacking_model = StackingRegressor(estimators=estimators, final_estimator=LinearRegression())
+stacking_model.fit(X_train, y_train)
+
+# Make Predictions and Evaluate
+def evaluate_model(model, X_test, y_test):
+    y_pred = model.predict(X_test)
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test, y_pred)
+    
+    print(f"{model.__class__.__name__} Performance:")
+    print(f"MAE: {mae}")
+    print(f"MSE: {mse}")
+    print(f"RMSE: {rmse}")
+    print(f"R2: {r2}")
+    print("-" * 50)
+
+# Evaluate all models
+evaluate_model(best_rf, X_test, y_test)
+evaluate_model(best_gb, X_test, y_test)
+evaluate_model(stacking_model, X_test, y_test)
+
+# Visualizing the predictions vs actual values for the stacked model
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x=y_test, y=stacking_model.predict(X_test))
+plt.xlabel('Actual Crop Yield')
+plt.ylabel('Predicted Crop Yield')
+plt.title('Actual vs Predicted Crop Yield (Stacked Model)')
+plt.show()
+
+# Residuals Plot for the Stacked Model
+plt.figure(figsize=(10, 6))
+sns.residplot(x=stacking_model.predict(X_test), y=y_test - stacking_model.predict(X_test), lowess=True, line_kws={'color': 'red'})
+plt.xlabel('Predicted Crop Yield')
+plt.ylabel('Residuals')
+plt.title('Residuals Plot (Stacked Model)')
+plt.show()
 
